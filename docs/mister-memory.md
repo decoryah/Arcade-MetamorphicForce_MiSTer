@@ -50,12 +50,44 @@ turns the finished picture 180 degrees through two DDR3 frame buffers, as in the
 rmonic79's module, as there; with this raster the picture is 288 pixels in a line of 384, starting 80 pixels after the hsync
 pulse starts and ending 16 before the next, so H-Size goes to +2 (read period 64 + n quarter-clocks) and H-Position to +12.
 
+### The scandoubler needs the horizontal blank alone
+
+`sys/scandoubler.v` (Scandoubler Fx, MiSTer.ini's `forced_scandoubler`) takes its line timing from the edges of
+`HBlank`: `hb` falling starts a line (`hcnt`, `sd_hcnt`, `hde_start` and the sampling of `vb_in` hang on it), and it
+shifts `vs_in` / `vb_in` through at those edges. It therefore expects `HBlank` to toggle on every line of the frame,
+the vertical blank lines included, with `VBlank` separate. The first release gave it `~de`, where `de` is the visible
+*rectangle* (`in_active_x && in_active_y`): `HBlank` stayed high through the whole vertical blank, the scandoubler's
+counters, reset only on that falling edge, ran on through the blank lines, and its doubled output had no vertical sync
+and no vertical blank (measured by probing the mixer in `sim/emu/run_sd.sh`: `vs_sd` and `vb_sd` constant 0 while the
+mixer's `vs_g` pulsed once a frame, `hs_sd` only in the 448 picture lines of a frame). The 15 kHz path is not affected,
+as `arcade_video` without the scandoubler only uses the combined blank for `VGA_DE`, so the board tests on a 15 kHz
+analog output and on HDMI through a scaler with no scandoubler did not show it.
+
+`mf_video.sv` now also outputs `hde` (the horizontal window alone, registered with `de`), through `mf_core.sv`;
+`MetamorphicForce.sv` gives `arcade_video` `HBlank = ~hde` (registered with the rest in `vq_*`) and keeps `VBlank =
+vblank`. `VGA_DE` comes out the same rows as before (the video mixer ANDs the two). CRT Adjust (`hb_in`) and Flip Screen
+keep the combined blank (`hblank_c`), which is what they want; CRT Adjust is gated off while the scandoubler is in use.
+
+Measured with `sim/emu/run_sd.sh` (this core's raster into `arcade_video`, nothing else): with the scandoubler on
+(forced, CRT 25 / 50 / 75 %) 528 lines a frame, 448 picture rows of 288 pixels (HQ2x 576), line period 3,072 clocks,
+frame period exactly 16 x 384 x 264 = 1,622,016 clocks, each source line twice in order, and a vertical sync in every
+mode; with the old wiring, none.
+
+The whole top level (`sim/emu/run_emu.sh`, skip-boot, 30 frames after the load) agrees: with the forced scandoubler,
+HQ2x or CRT 50 % the monitor gets 448 rows in 528 lines (288 pixels a row, 576 with HQ2x) and every frame period is
+exactly 1,622,016 clocks; the picture the scaler gets with the forced scandoubler or CRT 50 % is, on every other row,
+the 15 kHz picture byte for byte. The 15 kHz run after the change gives the same log (frame periods, geometry, EEPROM
+read back) and a byte-identical scaler picture as the run of the tree before it.
+
 ## Verification
 
 * `sim/tb_mf.cpp` (`tb_mf_top.sv`): `mf_core` behind `mf_mem` and a behavioural SDRAM chip, with the image streamed through the
   loader a byte at a time (or, with `BACKDOOR=1`, placed straight into the chip by the same address arithmetic). `ROMCHK=1`
   compares every tile, sprite and K053250 read the renderers complete with the image while the game runs.
 * `sim/emu/run_emu.sh`: the whole `emu` module of `MetamorphicForce.sv` with the framework's own video path, the SDRAM chip and an
-  Avalon DDR3 model; the loader check compares every word of the image with where the ports read it.
+  Avalon DDR3 model; the loader check compares every word of the image with where the ports read it. `FX=<n>` / `FSD=1`
+  turn on Scandoubler Fx / the framework's forced scandoubler and the bench then checks 448 rows in 528 lines.
+* `sim/emu/run_sd.sh`: `mf_video`'s raster into the framework's `arcade_video` and nothing else, with Scandoubler Fx and
+  forced_scandoubler selectable (`HONLY=0` is the first release's wiring, which has no vertical sync once scandoubled).
 * The built-in memory test (`mem_test.sv`, the diagnostic overlay's squares) reads every region back through the machine's own
   ports, twice: ok (read back what was loaded) and stable (the two passes agree), and tests the tile RAM with an address pattern.

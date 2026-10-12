@@ -15,7 +15,7 @@ No ROMs or other copyrighted data are in this repository; you supply your own MA
 
 ## Status
 
-**Run on a real MiSTer, by one tester so far.** The repository owner has played the release on a board with all five MRAs,
+**Run on a real MiSTer, by one tester so far.** The repository owner has played 20261011 and 20261012 on a board with all five MRAs,
 on HDMI through a RetroTINK 4K and on a 15 kHz analog output: the game runs fine overall and CRT Adjust works. That is one person's test on one board, not a comparison with
 the arcade PCB, so please report what yours shows.
 
@@ -60,10 +60,11 @@ MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   streamed in a byte at a time through the ioctl port, then the EEPROM default. Every word of the image is where the ports
   read it (8,650,752 compared with the SDRAM chip's array), the raster is 384 x 264 x 16 clocks = 59.1856 Hz in every
   frame, the picture is 224 rows of 288 pixels, and the EEPROM reads back through the save path.
-* **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7: 43 % of the ALMs
-  (18,159 of 41,910), 94 % of the block RAM (520 of 553 M10K, so little is left), 69 DSPs, and timing closes at 96 MHz
-  with every check positive (setup +0.87 ns on the core's clock, hold +0.25, recovery +1.78, removal +1.65 in the slow
-  100 C model; the framework's own HDMI clock domain closes with +0.38 ns). `tools/check_ram_depth.py` finds all 34 RAM
+* **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7 (the figures are 20261012's;
+  each release's summaries are in `releases/`): 43 % of the ALMs (18,043 of 41,910), 94 % of the block RAM (520 of 553
+  M10K, so little is left), 69 DSPs, and timing closes at 96 MHz with every check positive (setup +0.29 ns on the core's
+  clock, hold +0.24, recovery +1.51, removal +1.02 in the slow 100 C model; the framework's own HDMI clock domain closes
+  with +0.42 ns). `tools/check_ram_depth.py` finds all 34 RAM
   blocks the RTL declares built at their declared depth (an earlier core's fit built two-bank line buffers shallower than
   declared, which no simulator shows).
 
@@ -76,10 +77,19 @@ power-on RAM test checks 12 KB of plain RAM behind the sprite RAM (it halted at 
 the K053250's line buffer flipped banks when a row started rather than at the line's start (a line a frame, where the
 game's DMA falls, would have shown the next row's pixels from the middle of the line on).
 
+**20261012** -- Scandoubler Fx and MiSTer.ini's `forced_scandoubler` give a picture (see the paragraph under the OSD
+table). In 20261011 they produced no vertical sync, so a monitor or an HDMI scaler fed from the scandoubled output would
+have shown a frozen picture; the core now hands the framework's scandoubler the horizontal blank alone (`hde` from
+`mf_video.sv`). The machine and the 15 kHz output are unchanged: the whole-machine bench's 15 kHz run gives the same log
+and a byte-identical scaler picture as the tree of 20261011. Checked in simulation (`sim/emu/run_sd.sh`; the top level with
+`FSD=1` / `FX=n`: 448 rows in 528 lines, exact frame period) and run on a MiSTer by the repository owner: it works. Fitter and timing summaries:
+`releases/metamorphicforce_20261012.fit.summary` and `.sta.summary` (setup +0.29 ns on the core's clock; the fit of
+20261011 had +0.87 ns there, the same logic closes with less margin on another placement).
+
 ## Install
 
-1. Unzip `MetamorphicForce_MiSTer_20261011.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/metamorphicforce_20261011.rbf`) to `/media/fat/_Arcade/cores/` and the `.mra` files from `mra/` to
+1. Unzip `MetamorphicForce_MiSTer_20261012.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/metamorphicforce_20261012.rbf`) to `/media/fat/_Arcade/cores/` and the `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `metamorphicforce_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `metamorphicforce_*.rbf` files.
 2. Put your MAME 0.289 `metamrph.zip` in `/media/fat/games/mame/` (the parent set; the USA, Japan and Asia versions' ROMs
@@ -103,6 +113,15 @@ game's DMA falls, would have shown the next row's pixels from the middle of the 
 | Diagnostic overlay | Off, On | Three rows of 32 squares along the bottom of the picture, and the built-in memory test (a few seconds, black screen) after each ROM load |
 | SDRAM read capture | Normal, Late | Late samples SDRAM reads one clock later, for a module that answers slowly. At this core's clock phase it is expected to make no difference |
 | Reset | | Restarts the machine (the ROM stays loaded) |
+
+Scandoubler Fx and MiSTer.ini's `forced_scandoubler` make the core's 15 kHz picture a 31 kHz one (every line twice; HQ2x and
+the CRT filters on top). In `metamorphicforce_20261011` they gave no vertical sync at all, so the monitor or the HDMI
+scaler would have seen a stream without frames: a frozen picture with the sound still playing. The framework's scandoubler
+takes its line timing from the horizontal blank's edges and needs them on every line, vertical blanking included, and
+this core's blank was the picture window, high through the whole vertical blank. Fixed in `metamorphicforce_20261012`:
+the core gives it the horizontal blank alone (`hde` from `mf_video.sv`) with the vertical blank separate. The 15 kHz
+output and HDMI without Scandoubler Fx, which is what the board tests used, are as they were. (Found from a report on the
+Gaiapolis core, which had the same wiring.)
 
 **Reading the diagnostic overlay.** Turn it on *before* the ROM loads (OSD, then load the game again), or the memory test
 is skipped and its squares stay dark. Row 0: frame counter, PLL locked, memory ready, download, test hold, core reset, IRQ5,

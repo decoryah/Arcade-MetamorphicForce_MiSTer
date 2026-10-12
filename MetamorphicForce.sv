@@ -304,7 +304,7 @@ wire  [6:0] eep_addr  = ioctl_addr[6:0];
 wire  [7:0] eep_wdata = ioctl_dout;
 assign      ioctl_din = eep_q;
 
-wire        mf_cen_pix, mf_hs, mf_vs, mf_de, mf_vb;
+wire        mf_cen_pix, mf_hs, mf_vs, mf_de, mf_hde, mf_vb;
 wire [23:0] mf_rgb;
 wire [15:0] mf_snd_l, mf_snd_r;
 wire        mf_snd_valid;
@@ -327,7 +327,7 @@ mf_core #(.HEXDIR("rtl/data")) mf
 	.pcm_req(pcm_req), .pcm_addr(pcm_addr), .pcm_ack(pcm_ack), .pcm_q(pcm_q),
 	.eep_ld_we(eep_we), .eep_ld_addr(eep_addr), .eep_ld_wdata(eep_wdata), .eep_ld_q(eep_q), .eep_dirty(eep_dirty),
 	.in_p1_p3(in_p1_p3), .in_p2_p4(in_p2_p4), .in0(in0), .in1(in1),
-	.cen_pix(mf_cen_pix), .rgb(mf_rgb), .hsync(mf_hs), .vsync(mf_vs), .de(mf_de), .vblank(mf_vb),
+	.cen_pix(mf_cen_pix), .rgb(mf_rgb), .hsync(mf_hs), .vsync(mf_vs), .de(mf_de), .hde(mf_hde), .vblank(mf_vb),
 	.snd_l(mf_snd_l), .snd_r(mf_snd_r), .snd_valid(mf_snd_valid),
 	.dbg_addr(dbg_addr), .dbg_data(dbg_data), .dbg_busstate(dbg_busstate), .dbg_step(dbg_step),
 	.dbg_irq5(dbg_irq5), .dbg_irq6(dbg_irq6),
@@ -421,8 +421,16 @@ assign AUDIO_R = status[8] ? aud_l : aud_r;      // mono: the left mix on both
 ///////////////////////   VIDEO   ///////////////////////
 
 // the core emits one pixel per 6 MHz enable on the 96 MHz clock and holds it
-// for the sixteen clocks; its de is the visible rectangle, its vblank the
-// vertical blanking, so HBlank follows de and is high through the vertical blank
+// for the sixteen clocks; its de is the visible rectangle, its hde the same
+// without the vertical window, its vblank the vertical blanking.
+// The framework's scandoubler (sys/scandoubler.v) takes all its line timing from the edges of
+// HBlank: a line starts at its falling edge, and VBlank and VSync are sampled on those edges. It
+// needs HBlank to toggle on every line of the frame, the vertical-blank lines included, so
+// arcade_video gets the horizontal blank alone (hblank_h = ~hde). With HBlank following de it stays high
+// through the vertical blank and the scandoubled output (Scandoubler Fx, MiSTer.ini's
+// forced_scandoubler) has no vertical sync at all: a frozen picture and no sync on the monitor.
+// The 15 kHz path is not affected (arcade_video only combines the two blanks there, for VGA_DE).
+// hblank_c, the combined blank, is what CRT Adjust (hb_in) and Flip Screen want.
 wire hblank_c = ~mf_de;
 
 // Flip Screen: the finished picture (overlay included) turned 180 degrees, one frame late, through
@@ -440,9 +448,9 @@ flip_buf #(.W(288), .H(224)) u_flip
 // the finished picture's signals, one clock later, before they meet the CRT Adjust select: the long path from the
 // 68000's registers through the diagnostic overlay's address squares ends in this register instead of behind the select
 reg [23:0] vq_rgb;
-reg        vq_hb, vq_vb, vq_hs, vq_vs, vq_ce;
+reg        vq_hb, vq_hbh, vq_vb, vq_hs, vq_vs, vq_ce;
 always @(posedge clk_sys) begin
-	vq_rgb <= flip_rgb; vq_hb <= hblank_c; vq_vb <= mf_vb; vq_hs <= mf_hs; vq_vs <= mf_vs; vq_ce <= mf_cen_pix;
+	vq_rgb <= flip_rgb; vq_hb <= hblank_c; vq_hbh <= ~mf_hde; vq_vb <= mf_vb; vq_hs <= mf_hs; vq_vs <= mf_vs; vq_ce <= mf_cen_pix;
 end
 
 // CRT Adjust: the size, horizontal position and vertical position of the picture on a 15 kHz analog output
@@ -512,7 +520,7 @@ arcade_video #(.WIDTH(288), .DW(24), .GAMMA(1)) arcade_video
 	.clk_video(clk_sys),
 	.ce_pix(crt_on ? crt_rd_en : vq_ce),
 	.RGB_in(crt_on ? {crt_r, crt_g, crt_b} : vq_rgb),
-	.HBlank(crt_on ? (crt_hb | crt_hs) : vq_hb),   // CRT Adjust: nothing of the picture inside the hsync pulse
+	.HBlank(crt_on ? (crt_hb | crt_hs) : vq_hbh),  // CRT Adjust: nothing of the picture inside the hsync pulse; off: the horizontal blank alone (see VIDEO)
 	.VBlank(crt_on ? 1'b0 : vq_vb),             // CRT Adjust: the module's blank already includes the vertical one
 	.HSync(crt_on ? crt_hs : vq_hs),
 	.VSync(crt_on ? crt_vs : vq_vs),

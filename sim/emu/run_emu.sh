@@ -4,7 +4,9 @@
 # Environment: PROBE=1 (public signals; needed for the flip check), FLIP=1 (Flip Screen on from the start: the picture
 # the scaler gets must be the overlay's picture turned 180 degrees, one frame late), NOLOAD=1
 # CRT Adjust: CRT=1 turns it on, HSIZE (-16..4), HPOS (-48..20) and VSHIFT (-16..15) set the amounts as the OSD counts
-# them; MONO=1, TEST=1 set those OSD items. Every run prints the picture's geometry as the monitor gets it (rows,
+# them; MONO=1, TEST=1 set those OSD items. Scandoubler: FX=<n> sets Scandoubler Fx (status[5:3]; 1 HQ2x, 2..4 CRT
+# 25 / 50 / 75 %), FSD=1 the framework's forced_scandoubler (MiSTer.ini); the bench then expects 448 rows in 528 lines
+# (with HQ2x 576 pixels wide) and keeps every other row / column as the 288 x 224 picture for the scaler ppm. Every run prints the picture's geometry as the monitor gets it (rows,
 # where they start after the hsync pulse, how wide, the first row's distance from the vsync pulse): with CRT=1 and
 # the amounts at 0 it must equal the run without it, and the scaler picture (out prefix _scaler.ppm) must be byte
 # for byte the same
