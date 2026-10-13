@@ -87,8 +87,20 @@ The game's tile layers use **flipped Y** (reg 0 bit 5): MAME flips the whole til
 3 (xy scroll, the attract mode and stage 1) and, from stage 2 on, mode 0 (**line scroll**, layer D) are used with the flip.
 The scroll words of a one-page-high layer are source-oriented: with the Y flip the walk starts at entry 255 and runs
 backwards (MAME's override for the "software flipped" games, whatever the layer's Y scroll is); unflipped it starts at
-the Y scroll. Row scroll (mode 2) steps eight lines to an entry the same way. X flip and layers taller than one page
-with line / row scroll are flagged `unsupported` (never seen).
+the Y scroll. Row scroll (mode 2) steps eight lines to an entry the same way.
+
+The **Hall of Fame** screen (the attract mode's score table) uses row scroll (mode 2) on layers C and D, which are *two
+pages high* (`regs[10]` = 0x0011: start row 2, 2 pages; `regs[11]` = 0x0001: start row 0, 2 pages), with the Y flip: the
+title "HALL OF FAME" slides in with its own offset for each strip of eight rows. Line scroll (mode 0) on a two-page layer is
+used on the lead-in and lead-out of the same screen (layer D, then layer C). For a layer more than one page high MAME walks the page rows one after the other
+and the per-page walks join into a single run: with `ay` the layer's Y scroll modulo its height, a row `y` takes entry
+`ay - 1 - y` (flipped; `ay + y` unflipped), modulo 512 entries (the layer's 1,024-word area), and a row scroll takes the entry
+rounded down to a multiple of eight. This differs from the one-page rule above (entry 255 - y whatever the scroll is). It was
+written out from `k056832_device::tilemap_draw_common` and checked against a transcription of that loop (`tools/ls_model.py`:
+7.4 million rows for 1 / 2 / 4 pages, flipped or not, line and row scroll, scrolls -600..599, each row drawn by exactly one page,
+no difference) and against MAME's own frames of the screen. Before 20261014 the layer was read as one page, the title's
+strips took the wrong entries and the picture showed the strips displaced. X flip and a span of three pages are flagged
+`unsupported` (never seen).
 
 ### Sprites (K055673 RNG layout, 4bpp)
 Entry format as the other games (8 words, 256 entries). `metamrph_sprite_callback`:

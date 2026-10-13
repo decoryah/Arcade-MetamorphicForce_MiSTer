@@ -27,15 +27,17 @@
 // clocks for four layers of the 6,144 a 64 us line gives at 96 MHz
 // (docs/hardware.md section 11).
 //
-// Scroll modes: 3 (xy scroll) is what every captured frame uses and is gated;
-// 0 (line scroll) and 2 (row scroll) read the per-line/per-8-line X scroll
-// from the scroll page in tile RAM exactly as the model does, but no state in
-// the corpus exercises them -- they are here because the chip comes out of
-// reset in mode 0 and flagging that as unsupported was a false alarm.
+// Scroll modes: 3 (xy scroll) is what almost every captured frame uses; 0
+// (line scroll) and 2 (row scroll) read the per-line/per-8-line X scroll from
+// the scroll page in tile RAM. The Hall of Fame screen uses row scroll on two
+// layers that are two pages high, with the global Y flip set (its title slides
+// in with a different offset for every strip of eight rows): those frames are
+// in the checked set, and the entry index for a layer more than one page high
+// is the one MAME's loop over the page rows gives (see ls_idx below).
 //
 // `unsupported` is raised for configurations the model has not been checked
 // against, rather than rendering something plausible and wrong:
-//   * global screen flip
+//   * global screen X flip
 //   * a page span of 3 (not a power of two, so the wrap cannot be a mask)
 //------------------------------------------------------------------------------
 `default_nettype none
@@ -219,7 +221,7 @@ module k056832_tilemap #(
     wire  [3:0] scrollbank = {regs[24][4:3], regs[24][1:0]};
     // (the word index, ls_word, is defined below, after scroll_y: it takes the layer's Y scroll)
     logic [15:0] scroll_word;
-    wire  [15:0] scroll_reg = (scrollmode == 2'd3) ? regs[sx_i] : scroll_word;
+    wire  [15:0] scroll_reg = scrollmode[0] ? regs[sx_i] : scroll_word;
     /* verilator lint_off UNUSEDSIGNAL */
     wire [4:0] sx_i = 5'd20 + {3'd0, cur_l};
     wire [4:0] sy_i = 5'd16 + {3'd0, cur_l};
@@ -238,15 +240,29 @@ module k056832_tilemap #(
     //   row scroll (mode 2), unflipped:   e = (dy + y) & ~7, one entry for eight lines
     //   row scroll, Y flipped:            e = 248 - 8 * ((y + (dy & 7)) >> 3)
     // with y the absolute row and dy the layer's Y scroll register plus the flip correction (scroll_y).
-    // Only pages one row high are checked (S_SETUP raises `unsupported` for the others).
+    //
+    // A layer more than one page high (rowspan 1 or 3: two or four pages, MAME's loop over the page rows) takes its entry
+    // from the layer row instead: unflipped it is the same e = dy + y (the entries run on through the pages, 512 of them
+    // in the layer's area, wrapping), flipped
+    //   line scroll, Y flipped, 2/4 pages: e = scroll - 1 - y    (the page rows' walks join into one run, which starts
+    //                                       wherever the scroll puts the layer's bottom edge)
+    //   row scroll,  Y flipped, 2/4 pages: e = (scroll - 1 - y) & ~7
+    // (everything modulo 512 entries). A span of 3 pages is not a power of two and stays unsupported (S_SETUP).
+    // Checked against a transcription of MAME's loop (tools/ls_model.py): every row of 256, for 1 / 2 / 4 pages, flipped
+    // or not, line or row scroll, scrolls -600..599, each drawn by exactly one page, 0 differences.
+    wire        ls_multi = (rowspan != 2'd0);
     wire  [8:0] ls_sum   = scroll_y[8:0] + line_a;
     wire  [9:0] ls_n0    = {ls_sum, 1'b1};
-    wire  [9:0] ls_n2    = {ls_sum[8:3], 4'd0, 1'b0} | 10'd1;
+    wire  [9:0] ls_n2    = {ls_sum[8:3], 3'd0, 1'b1};
     wire  [8:0] ls_f0v   = 9'd255 - line_a;
     wire  [9:0] ls_f0    = {ls_f0v, 1'b1};
     wire  [9:0] ls_sum2  = {1'b0, line_a} + {7'd0, scroll_y[2:0]};
     wire  [9:0] ls_f2    = (10'd496 - {ls_sum2[8:3], 4'd0}) | 10'd1;
-    wire  [9:0] ls_idx   = flip_y ? (scrollmode[1] ? ls_f2 : ls_f0) : (scrollmode[1] ? ls_n2 : ls_n0);
+    wire  [8:0] ls_rho   = scroll_y[8:0] - 9'd1 - line_a;
+    wire  [9:0] ls_fm0   = {ls_rho, 1'b1};
+    wire  [9:0] ls_fm2   = {ls_rho[8:3], 3'd0, 1'b1};
+    wire  [9:0] ls_idx   = flip_y ? (ls_multi ? (scrollmode[1] ? ls_fm2 : ls_fm0) : (scrollmode[1] ? ls_f2 : ls_f0))
+                                  : (scrollmode[1] ? ls_n2 : ls_n0);
     wire [11:0] ls_word  = {cur_l, 10'd0} + {2'd0, ls_idx};
     wire [15:0] scroll_vram_addr = {scrollbank, ls_word};
     wire [11:0] wrap_x = ({10'd0, colspan} + 12'd1) << 9;
@@ -301,8 +317,7 @@ module k056832_tilemap #(
                 S_SETUP: begin
                     cur_x <= '0;
                     if (colspan == 2'd2 || rowspan == 2'd2) unsupported <= 1'b1;
-                    if (scrollmode != 2'd3 && rowspan != 2'd0) unsupported <= 1'b1;   // line / row scroll is checked for one-page-high layers
-                    if (scrollmode == 2'd3) begin
+                    if (scrollmode[0]) begin     // xy scroll (3, and the reserved 1: MAME's `default`)
                         vx  <= vx0 & (wrap_x - 12'd1);
                         fvx <= vx0 & (wrap_x - 12'd1);
                         vy  <= vy0 & (wrap_y - 11'd1);

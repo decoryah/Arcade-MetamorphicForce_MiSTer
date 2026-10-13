@@ -15,9 +15,11 @@ No ROMs or other copyrighted data are in this repository; you supply your own MA
 
 ## Status
 
-**Run on a real MiSTer, by one tester so far.** The repository owner has played 20261011 and 20261012 on a board with all five MRAs,
-on HDMI through a RetroTINK 4K and on a 15 kHz analog output: the game runs fine overall and CRT Adjust works. That is one person's test on one board, not a comparison with
-the arcade PCB, so please report what yours shows.
+**Run on a real MiSTer, by one tester so far.** The repository owner has played 20261011, 20261012, 20261013 and 20261014
+on a board with all five MRAs, on HDMI through a RetroTINK 4K and on a 15 kHz analog output: the game runs fine overall, CRT
+Adjust works, and so do the fast loading and the Scale options of 20261013 and the Hall of Fame title of 20261014. That is
+one person's test on one board, not a comparison with the arcade PCB, so please report what yours shows. The fault found
+there since 20261012, the Hall of Fame screen's title animation, had not been in any of the frame corpora.
 
 Everything else below is simulation and the Quartus tool flow, against MAME 0.289 (the reference for every comparison;
 MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
@@ -31,7 +33,9 @@ MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   with each layer set enabled alone: the tile layers and the K053250 alone are pixel-identical in every one, and the
   differences are in the sprites-only render. The slowest line of any corpus frame takes 3,303 of the 6,144 clocks a line allows
   (the K053250's columns, with the memory ideal; the whole-machine bench's sprite ROM port latency is 35 clocks on average,
-  97 at worst, and its renderers never overran a line in the 310 frames of the final run).
+  97 at worst, and its renderers never overran a line in the 310 frames of the final run). A fourth set, added with
+  20261014, is MAME's **Hall of Fame** screen (65 frames, every 15th from 8,940 of the attract loop): **60 pixel-identical**,
+  the other 5 being the next demo's water reflection (the same translucent-sprite difference).
 * **K053250.** `sim/tb_lvc*`: the plane's renderer against a transcription of MAME's `k053250_device::draw` on random
   line RAM, registers, ROM and frame timing, in every orientation / source-size mode: exact. With `+slow=1` the finished
   row is scanned out at the real pixel rate while a DMA (2,050 clocks, holding the 68000) delays the next row, which
@@ -60,11 +64,11 @@ MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   streamed in a byte at a time through the ioctl port, then the EEPROM default. Every word of the image is where the ports
   read it (8,650,752 compared with the SDRAM chip's array), the raster is 384 x 264 x 16 clocks = 59.1856 Hz in every
   frame, the picture is 224 rows of 288 pixels, and the EEPROM reads back through the save path.
-* **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7 (the figures are 20261012's;
-  each release's summaries are in `releases/`): 43 % of the ALMs (18,043 of 41,910), 94 % of the block RAM (520 of 553
-  M10K, so little is left), 69 DSPs, and timing closes at 96 MHz with every check positive (setup +0.29 ns on the core's
-  clock, hold +0.24, recovery +1.51, removal +1.02 in the slow 100 C model; the framework's own HDMI clock domain closes
-  with +0.42 ns). `tools/check_ram_depth.py` finds all 34 RAM
+* **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7 (the figures are 20261014's;
+  each release's summaries are in `releases/`): 45 % of the ALMs (19,047 of 41,910), 94 % of the block RAM (520 of 553
+  M10K, so little is left), 69 DSPs, and timing closes at 96 MHz with every check positive (setup +0.32 ns on the core's
+  clock, hold +0.24, recovery +1.80, removal +1.15 in the slow 100 C model; the framework's own HDMI clock domain closes
+  with +0.43 ns). `tools/check_ram_depth.py` finds all 34 RAM
   blocks the RTL declares built at their declared depth (an earlier core's fit built two-bank line buffers shallower than
   declared, which no simulator shows).
 
@@ -86,22 +90,80 @@ and a byte-identical scaler picture as the tree of 20261011. Checked in simulati
 `releases/metamorphicforce_20261012.fit.summary` and `.sta.summary` (setup +0.29 ns on the core's clock; the fit of
 20261011 had +0.87 ns there, the same logic closes with less margin on another placement).
 
+**20261013** -- Fast loading, and Scale in the OSD (both as in the Monster Maulers core). *Fast loading:* the MRAs now
+carry `address="0x32000000"` on the ROM image's `<rom>` (the attribute the Namco NB-2 core uses). A recent Main_MiSTer
+then does not stream the 17 MB image through the HPS port a byte at a time (the Monster Maulers core's 22 MB took 23-25 s
+that way on the board that was timed) but copies the assembled
+image into the DDR3 in one go and ends a download that has no data, only a start address: the image's length. The core
+stays in reset, reads the image back from the DDR3 in 256-byte blocks (`mf_mem.sv`; `FL_BASE` = byte 0x32000000, outside
+the Flip Screen buffers; the arbiter's client port, which nothing used before) and pushes the words into the same loader
+FIFO the streamed bytes go through, so the memory layout, the cache sweep and the memory test behave as before (the memory
+test is handed the replayed bytes too, so its sums are the image's). A Main_MiSTer that does not know the attribute
+streams the bytes as before (`ioctl_addr` is 0 at the start of such a download, which is how the two are told apart), so
+one RBF and one set of MRAs serve both. *Scale:* Normal, V-Integer, HV-Integer, Narrower HV-Integer and HV-Integer+, the
+framework's `video_freak` after `arcade_video`: for the HDMI scaler, which gets an exact size in pixels instead of the
+aspect ratio (the 15 kHz analog output is not affected); with Scale on Normal `VIDEO_ARX` / `VIDEO_ARY` are what they were,
+and Full Screen with an integer Scale is given the screen's own proportions (see "OSD options"). Checked in simulation
+(`sim/emu/run_emu.sh`, the whole top level): `FAST=1` replays the 8,650,752 words of the image from a DDR3 model in 0.73
+s at 96 MHz (the loader's rate is the limit) and every word is where the ports read it, 0 wrong, 67,584 block reads, 0 DDR3
+protocol errors, frames and timing as with a streamed load and the scaler picture byte-identical to it; the memory test's
+six running sums, read from the bench after a fast load and after a streamed one, equal the image's region by region;
+`SCALE=` / `AR=` / `HW=` / `HH=` compare the size the core asks the scaler for with the framework's integer rule, worked
+out in the bench, over the five Scale modes, three aspect settings and six scaler sizes (1920 x 1080, 1280 x 720,
+3840 x 2160, 640 x 480, 200 x 150 and an unknown size), 150 runs in all (90 on the 15 kHz path, 30 with HQ2x and 30 with
+the forced scandoubler), none off. Fitter and timing summaries:
+`releases/metamorphicforce_20261013.fit.summary` and `.sta.summary` (setup +0.70 ns on the core's clock, 19,414 ALMs).
+Run on a MiSTer by the repository owner: fast loading and the Scale options work.
+
+**20261014** -- The Hall of Fame screen's title. On the board the title "HALL OF FAME" slid in and then stood in
+misplaced slices (found by the owner in 20261013; the earlier builds draw it the same way). That screen runs the
+K056832's layers C and D in *row scroll* mode (an X offset for each strip of eight rows, read from the scroll page) on a
+layout *two pages high*, with the global Y flip. The tilemap renderer picked the scroll entry as if every layer were one
+page high (and raised `unsupported`, which only the benches look at), so each strip took another strip's offset. The
+screen was in none of the frame corpora (the 115 frames are attract-mode frames before it and a scripted play-through),
+which is why no bench caught it. Fixed in `rtl/k056832_tilemap.sv`: for a layer two or four pages high the entry follows
+MAME's loop over the page rows (`ay - 1 - y` flipped, `ay + y` unflipped, modulo 512 entries, row scroll rounded down to
+eight; `docs/hardware.md`). Checked against a transcription of that loop (`tools/ls_model.py`: 7.4 million rows over 1 / 2 /
+4 pages, flipped or not, line and row scroll, scrolls -600..599, each row drawn by exactly one page: no difference) and
+against MAME's own frames of the screen: 65 frames from the first row of scores on (every 15th frame from 8,940 of the
+attract loop), **60 pixel-identical** -- before the fix the bench refused the screen (`unsupported`); the other 5 are the
+next demo's water reflection, the known sprite-blending difference. The 115-frame corpus is unchanged (101 identical), and
+the whole top level's bench passes as before. A second, unreached fault on the way: unflipped row scroll indexed the scroll
+words with a stray extra zero (this game always runs flipped). A 120,000-frame scripted play-through and 40,000 frames of the
+attract mode were logged in MAME for the K056832's layer configurations (`tools/lua/cfg_log.lua`): xy, line and row
+scroll on one- and two-page layers, never an X flip or a three-page span: every configuration those runs used is one
+the renderer now handles. Fitter and timing summaries: `releases/metamorphicforce_20261014.fit.summary` and `.sta.summary`
+(19,047 ALMs; setup +0.32 ns on the core's clock, where the fit of 20261013 had +0.70: the same kind of change of
+placement as between 20261011 and 20261012). Run on a MiSTer by the repository owner: the title animation is right.
+
 ## Install
 
-1. Unzip `MetamorphicForce_MiSTer_20261012.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/metamorphicforce_20261012.rbf`) to `/media/fat/_Arcade/cores/` and the `.mra` files from `mra/` to
+1. Unzip `MetamorphicForce_MiSTer_20261014.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/metamorphicforce_20261014.rbf`) to `/media/fat/_Arcade/cores/` and the `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `metamorphicforce_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `metamorphicforce_*.rbf` files.
 2. Put your MAME 0.289 `metamrph.zip` in `/media/fat/games/mame/` (the parent set; the USA, Japan and Asia versions' ROMs
    are in the merged set, or in `metamrphu.zip` / `metamrphj.zip` / `metamrpha.zip` next to it). No ROMs are distributed.
-3. Start `Metamorphic Force (World ver EAA)` from the Arcade menu. The ROM image is 17 MB and takes a few seconds to load.
-   The game's power-on tests take about 11 seconds, as on the board.
+3. Start `Metamorphic Force (World ver EAA)` from the Arcade menu. The ROM image is 17 MB. With a recent Main_MiSTer (one
+   that knows the MRA's `address=` attribute) it is copied to the DDR3 in one go and loaded in about a second; an older one
+   streams it through the HPS port, as before, which takes far longer. The game's power-on tests take about 11 seconds, as
+   on the board.
+
+### Fast loading
+
+The five MRAs carry `address="0x32000000"` on the ROM image. A Main_MiSTer that supports that attribute copies the assembled
+17 MB image into the DDR3 in one go instead of streaming it through the HPS port a byte at a time, and the core reads it back
+from there into its loader: the load takes about a second. There is nothing to set. A Main_MiSTer that ignores the attribute
+streams the image as before, with the same RBF and MRAs. To see which of the two you got, switch on the Diagnostic overlay
+(see below): the *download* square (row 0, 11th from the left) is lit for about a second with fast loading and for the
+whole, much longer streamed load without. How it works: `docs/mister-memory.md`, "Fast load".
 
 ## OSD options
 
 | Option | Values | |
 |---|---|---|
 | Aspect ratio | Original, Full Screen, [ARC1], [ARC2] | Original is 4:3 |
+| Scale | Normal, V-Integer, HV-Integer, Narrower HV-Integer, HV-Integer+ | Integer scaling for the HDMI scaler (the framework's `video_freak`; the 15 kHz analog output is not touched). Normal leaves the picture's size to the scaler. The modes work from the finished picture (the scandoubler and CRT Adjust included) and the scaler's own output size; Full Screen has no proportions for the integer rule to size the width from, so with an integer Scale it is given the screen's own |
 | Flip Screen | Off, On | The picture turned 180 degrees on every output. Done on the finished picture through a frame buffer in the DDR3, so it adds one frame (17 ms) of delay while it is on and nothing when it is off |
 | Scandoubler Fx | None, HQ2x, CRT 25%, CRT 50%, CRT 75% | |
 | CRT Adjust | submenu: CRT Adjust Off, On; then CRT H-Size 0..+2 / -16..-1, CRT H-Position -48..+12, CRT V-Shift -16..+15 | Fits the picture to a 15 kHz analog (CRT) output without the monitor losing sync. Does nothing while the scandoubler is in use. Off by default |

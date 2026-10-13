@@ -28,7 +28,8 @@
 `default_nettype none
 
 module mf_mem #(
-    parameter int TEST_SHRINK = 0       // the memory test reads 1/2^n of each region (benches)
+    parameter int TEST_SHRINK = 0,      // the memory test reads 1/2^n of each region (benches)
+    parameter [24:0] FL_BASE = 25'h0400000  // fast load: the DDR3 beat of the image in the client's window (byte 0x32000000)
 ) (
     input  logic        clk,            // 96 MHz
     input  logic        clk_sdram,      // 96 MHz, phase-shifted: drives the SDRAM clock pin
@@ -51,6 +52,21 @@ module mf_mem #(
     input  logic [24:0] dl_addr,
     input  logic  [7:0] dl_data,
     output logic        dl_wait,        // hold the next byte
+
+    // fast load (the MRA's address= attribute): Main_MiSTer has put the whole image into DDR3 at FL_BASE in one
+    // go and ended an empty download; `fl_go` (one clock) says so and `fl_len` is the image's length in bytes.
+    // The image is read back and its words pushed into the loader's FIFO as if the HPS had streamed them;
+    // `fl_done` (one clock) comes when the last of them has been written. The DDR3 client port is the arbiter's
+    // (ddr_arb.sv c_*): plain Avalon-MM master, rd held until a clock where busy is low
+    input  logic        fl_go,
+    input  logic [24:0] fl_len,
+    output logic        fl_done,
+    output logic        ddr_rd,
+    output logic [24:0] ddr_addr,       // 64-bit word address within the client's window
+    output logic  [7:0] ddr_burst,
+    input  logic        ddr_busy,
+    input  logic [63:0] ddr_dout,
+    input  logic        ddr_dready,
 
     // core ports
     input  logic        prog_req,  input  logic [22:1] prog_addr, output logic prog_ack, output logic [15:0] prog_q,
@@ -101,6 +117,11 @@ module mf_mem #(
         end
     end
 
+    // a fast load's word, produced by the DDR3 block reader below, one clock before it is pushed
+    logic        fl_wv;
+    logic [23:0] fl_wa;
+    logic [15:0] fl_word;
+
     (* ramstyle = "no_rw_check" *) logic [41:0] wfifo [64];   // the head is never the entry being written
     logic  [6:0] wf_wp, wf_rp;
     wire         wf_empty = (wf_wp == wf_rp);
@@ -135,8 +156,8 @@ module mf_mem #(
             end else if (pend_v) begin
                 if (pend_age == 8'hff) pend_v <= 1'b0; else pend_age <= pend_age + 8'd1;
             end
-            if (wf_push) begin              // not full: the HPS stops at dl_wait with 32 queued
-                wfifo[wf_wp[5:0]] <= wf_in;
+            if (wf_push || fl_wv) begin     // not full: the HPS stops at dl_wait with 32 queued, a fast load waits for room
+                wfifo[wf_wp[5:0]] <= fl_wv ? {fl_wa, 2'b11, fl_word} : wf_in;
                 wf_wp <= wf_wp + 7'd1;
             end
             case (wst)
@@ -170,6 +191,74 @@ module mf_mem #(
         end
     end
 
+    // ------------------------------------------------------ fast load
+    // The image is read back from the DDR3 a 256-byte block at a time (a 32-beat burst into a small buffer) and its
+    // 128 words go into the loader's FIFO as room allows, one word every three clocks, so the layout, the cache sweep
+    // and the memory test are those of a streamed load; the memory test is given the same bytes the HPS would have
+    // streamed (high byte, low byte), so its sums are those of the image. The loader takes about a word per ten clocks:
+    // that, not the DDR3, sets the time of the load.
+    typedef enum logic [2:0] { F_IDLE, F_REQ, F_BEATS, F_PUSH, F_FIN } fst_t;
+    fst_t        fst;
+    (* ramstyle = "MLAB" *) logic [63:0] fbuf [32];
+    logic        fl_pend, fl_ok, fl_bw;
+    logic [24:0] fl_off_w, fl_end_w;    // the block's first word, the image's length in words
+    logic [24:0] fl_ba;                 // the memory test's byte address, data
+    logic  [7:0] fl_bd, fw;
+    logic  [5:0] fbn;                   // beats of the block stored
+    logic  [1:0] fph;                   // 0 take the word (room in the FIFO), 1 push it and its high byte, 2 low byte
+    logic  [8:0] fowed;                 // read beats still to come
+    wire         fl_room = ((wf_wp - wf_rp) < 7'd56);   // room for this word and the one in flight
+
+    always_ff @(posedge clk) begin
+        fl_wv <= 1'b0; fl_bw <= 1'b0; fl_done <= 1'b0;
+        if (init) fowed <= '0;
+        else fowed <= fowed + ((ddr_rd && !ddr_busy) ? 9'(ddr_burst) : 9'd0) - (ddr_dready ? 9'd1 : 9'd0);
+        if (ddr_rd && !ddr_busy) ddr_rd <= 1'b0;                // taken (cleared first: a state may present the next one below)
+        if (fl_go) fl_pend <= 1'b1;
+        if (cinv) begin
+            fst <= F_IDLE; ddr_rd <= 1'b0; fl_pend <= 1'b0;
+        end else case (fst)
+            F_IDLE: if (fl_pend && fowed == 9'd0) begin         // after any burst of an aborted load has come back
+                fl_pend <= 1'b0;
+                fl_off_w <= '0; fl_end_w <= {1'b0, fl_len[24:1]} + {24'd0, fl_len[0]};
+                fst <= F_REQ;
+            end
+            F_REQ: begin
+                if (fl_off_w >= fl_end_w) fst <= F_FIN;
+                else if (!ddr_rd) begin
+                    ddr_rd <= 1'b1; ddr_addr <= FL_BASE + 25'(fl_off_w[24:2]); ddr_burst <= 8'd32;
+                    fbn <= '0; fst <= F_BEATS;
+                end
+            end
+            F_BEATS: if (ddr_dready) begin
+                fbuf[fbn[4:0]] <= ddr_dout; fbn <= fbn + 6'd1;
+                if (fbn == 6'd31) begin fw <= '0; fph <= 2'd0; fst <= F_PUSH; end
+            end
+            F_PUSH: case (fph)
+                2'd0: if (fl_room) begin
+                    // the beat's little-endian halfword, as the image's big-endian word
+                    fl_word <= {fbuf[fw[6:2]][16 * fw[1:0] +: 8], fbuf[fw[6:2]][16 * fw[1:0] + 8 +: 8]};
+                    fl_wa   <= {fl_off_w[23:7], fw[6:0]};
+                    fl_ok   <= ({fl_off_w[24:7], fw[6:0]} < fl_end_w);
+                    fph <= 2'd1;
+                end
+                2'd1: begin
+                    fl_wv <= fl_ok; fl_bw <= fl_ok; fl_ba <= {fl_wa, 1'b0}; fl_bd <= fl_word[15:8];
+                    fph <= 2'd2;
+                end
+                default: begin
+                    fl_bw <= fl_ok; fl_ba <= {fl_wa, 1'b1}; fl_bd <= fl_word[7:0];
+                    fph <= 2'd0;
+                    if (fw == 8'd127) begin fl_off_w <= fl_off_w + 25'd128; fst <= F_REQ; end
+                    else fw <= fw + 8'd1;
+                end
+            endcase
+            // done when the loader has written every word (an entry leaves the FIFO when its write is acknowledged)
+            F_FIN: if (wf_empty && wst == W_IDLE && !fl_wv) begin fl_done <= 1'b1; fst <= F_IDLE; end
+            default: fst <= F_IDLE;
+        endcase
+    end
+
     // ---------------------------------------------- the test drives the ports
     logic        t_prog_req, t_snd_req, t_tile_req, t_lvc_req, t_pcm_req, t_spr_req;
     logic [22:1] t_prog_addr; logic [17:0] t_snd_addr; logic [18:0] t_tile_addr; logic [14:0] t_lvc_addr;
@@ -197,7 +286,7 @@ module mf_mem #(
     mem_test #(.SHRINK(TEST_SHRINK)) u_test (
         .clk(clk), .init(init), .ready(mem_ready), .start(test_start), .run(test_run), .done(test_done),
         .ok(test_ok), .stable(test_stable), .vram_ok(vram_ok), .vram_bad(vram_bad),
-        .dl_we(dl_we), .dl_addr(dl_addr), .dl_data(dl_data),
+        .dl_we(dl_we || fl_bw), .dl_addr(fl_bw ? fl_ba : dl_addr), .dl_data(fl_bw ? fl_bd : dl_data),
         .prog_req(t_prog_req), .prog_addr(t_prog_addr), .prog_ack(prog_ack), .prog_q(prog_q),
         .snd_req(t_snd_req), .snd_addr(t_snd_addr), .snd_ack(snd_ack), .snd_q(snd_q),
         .tile_req(t_tile_req), .tile_addr(t_tile_addr), .tile_ack(tile_ack), .tile_q(tile_q),

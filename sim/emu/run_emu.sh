@@ -6,10 +6,15 @@
 # CRT Adjust: CRT=1 turns it on, HSIZE (-16..4), HPOS (-48..20) and VSHIFT (-16..15) set the amounts as the OSD counts
 # them; MONO=1, TEST=1 set those OSD items. Scandoubler: FX=<n> sets Scandoubler Fx (status[5:3]; 1 HQ2x, 2..4 CRT
 # 25 / 50 / 75 %), FSD=1 the framework's forced_scandoubler (MiSTer.ini); the bench then expects 448 rows in 528 lines
-# (with HQ2x 576 pixels wide) and keeps every other row / column as the 288 x 224 picture for the scaler ppm. Every run prints the picture's geometry as the monitor gets it (rows,
-# where they start after the hsync pulse, how wide, the first row's distance from the vsync pulse): with CRT=1 and
-# the amounts at 0 it must equal the run without it, and the scaler picture (out prefix _scaler.ppm) must be byte
-# for byte the same
+# (with HQ2x 576 pixels wide) and keeps every other row / column as the 288 x 224 picture for the scaler ppm. Every
+# run prints the picture's geometry as the monitor gets it (rows, where they start after the hsync pulse, how wide,
+# the first row's distance from the vsync pulse): with CRT=1 and the amounts at 0 it must equal the run without it,
+# and the scaler picture (out prefix _scaler.ppm) must be byte for byte the same
+# Scale: SCALE=0..4 (the OSD's Scale: Normal, V-Integer, HV-Integer, Narrower HV-Integer, HV-Integer+), AR=0..3 (Aspect
+# ratio: Original, Full Screen, ARC1, ARC2) and HW / HH (the scaler's output size, default 1920 x 1080) are set, and the
+# size the core asks the scaler for (VIDEO_ARX / VIDEO_ARY) is checked against the framework's rule (see tb_emu.cpp)
+# Fast load: FAST=1 models the HPS side of the MRA's address= attribute (the image copied into the DDR3, then a
+# download with no bytes) and the core replays it into its loader
 # The image is tools/mra_build.py on a mra/*.mra (0x1080000 bytes); the EEPROM default is metamrph.nv from the romset
 # (128 bytes).
 set -e
@@ -38,9 +43,9 @@ verilator --cc --exe --build -j ${JOBS:-8} -O2 -Wno-fatal -Wno-WIDTH -Wno-DECLFI
     --top-module tb_emu_top --prefix Vtb_emu_top -Mdir $OBJ \
     ../../MetamorphicForce.sv ../../rtl/*.sv ../../modules/cpu-tg68k/gen/tg68k.v ../../modules/cpu-tv80/*.v ../../modules/crt-adjust/crt_adjust.sv \
     ../../target/mister/mf_mem.sv ../../target/mister/rom_cache.sv ../../target/mister/mem_test.sv ../../target/mister/sdram_ctrl.sv ../../target/mister/ddr_arb.sv ../../target/mister/flip_buf.sv \
-    $S/arcade_video.v $OBJ/video_mixer_sim.sv $S/scandoubler.v $S/scanlines.v $S/gamma_corr.sv $S/hq2x.sv $S/video_freezer.sv \
+    $S/arcade_video.v $OBJ/video_mixer_sim.sv $S/scandoubler.v $S/scanlines.v $S/gamma_corr.sv $S/hq2x.sv $S/video_freezer.sv $S/video_freak.sv $S/math.sv \
     hps_io_stub.sv pll_stub.sv sync_fix.sv ../sdram_model.sv ../ddr_model.sv tb_emu_top.sv tb_emu.cpp \
     > $OBJ.log 2>&1 || { grep -E "%Error" $OBJ.log | head -30; tail -5 $OBJ.log; exit 1; }
 # the core reads its tables with $readmemh relative to the project directory (as Quartus does)
 cd ../..
-./sim/emu/$OBJ/Vtb_emu_top "$IMG" "$NV" "$FR" "$PRE" "$DIAG" "${NOLOAD:-0}"
+stdbuf -oL ./sim/emu/$OBJ/Vtb_emu_top "$IMG" "$NV" "$FR" "$PRE" "$DIAG" "${NOLOAD:-0}"

@@ -58,16 +58,32 @@ wire         forced_scandoubler;
 wire         direct_video;
 wire  [21:0] gamma_bus;
 
+// Aspect ratio and Scale. The framework's video_freak (after arcade_video, below) turns the two into VIDEO_ARX/ARY: with
+// Scale Normal they pass through as they are; the integer modes replace them with the exact size in pixels (bit 12 set)
+// that the HDMI scaler should give the picture. The menu's order is the user's; video_freak's SCALE input counts
+// 0 Normal, 1 V-Integer, 2 Narrower HV-Integer, 3 HV-Integer+ (wider), 4 HV-Integer
+reg   [2:0] scale_sel;
+always @* case (status[34:32])
+	3'd1:    scale_sel = 3'd1;   // V-Integer
+	3'd2:    scale_sel = 3'd4;   // HV-Integer
+	3'd3:    scale_sel = 3'd2;   // Narrower HV-Integer
+	3'd4:    scale_sel = 3'd3;   // HV-Integer+
+	default: scale_sel = 3'd0;   // Normal
+endcase
+// Full Screen is ARX = ARY = 0 ("fill"), which has no proportions for the integer rule to size the width from: it sizes
+// the height from the width instead and asks for more rows than the screen has (1344 on a 1080p display). With an integer
+// Scale the screen's own proportions stand in for it, so the picture is a whole-number size in the screen's aspect
 wire  [1:0] ar         = status[122:121];
-
-assign VIDEO_ARX = (!ar) ? 13'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 13'd3 : 13'd0;
+wire        fs_int     = (ar == 2'd1) && (scale_sel != 3'd0) && (HDMI_WIDTH != 12'd0) && (HDMI_HEIGHT != 12'd0);
+wire [11:0] arx        = fs_int ? HDMI_WIDTH  : (!ar) ? 12'd4 : (ar - 1'd1);
+wire [11:0] ary        = fs_int ? HDMI_HEIGHT : (!ar) ? 12'd3 : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
 	"A.METAMRPH;;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"O[34:32],Scale,Normal,V-Integer,HV-Integer,Narrower HV-Integer,HV-Integer+;",
 	"O[12],Flip Screen,Off,On;",
 	"O[5:3],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"P1,CRT Adjust;",
@@ -215,6 +231,22 @@ always @(posedge clk_sys) rom_dl_d <= rom_dl;
 wire  dl_start = rom_dl && !rom_dl_d;
 wire  dl_done  = !rom_dl && rom_dl_d;
 
+// Fast load: with address= on the MRA's index-0 <rom>, Main_MiSTer copies the whole assembled image into the DDR3 in one
+// go and then ends a download that has no data bytes, only a start address: the image's length (ioctl_addr, which
+// is 0 at the start of an ordinary download). The core stays in reset from that start until mf_mem has read the image
+// back and pushed it through the loader (fl_done), so the picture and the memory test see a finished load. An older
+// Main_MiSTer ignores the attribute and streams the bytes as before; nothing here touches that path
+reg         fast_dl /*verilator public_flat_rd*/ = 1'b0;
+reg  [24:0] fast_len;
+wire        fl_go   = fast_dl && dl_done;
+wire        fl_done;
+always @(posedge clk_sys) begin
+	if (dl_start) begin fast_dl <= (ioctl_addr != 27'd0); fast_len <= ioctl_addr[24:0]; end
+	else if (fl_done) fast_dl <= 1'b0;
+end
+// the load is over: when the stream ended, or, for a fast one, when the image has gone through the loader
+wire        load_done = fast_dl ? fl_done : dl_done;
+
 wire        mem_init = ~pll_locked | RESET;
 
 wire        mem_ready, test_run, test_done, vram_ok;
@@ -224,7 +256,7 @@ wire  [3:0] vram_bad;
 // the built-in memory test: only with the diagnostic overlay on, at the end of a load
 reg   test_start, test_hold;
 always @(posedge clk_sys) begin
-	test_start <= dl_done && status[9];
+	test_start <= load_done && status[9];
 	if (test_start) test_hold <= 1'b1;
 	else if (test_done) test_hold <= 1'b0;
 end
@@ -238,6 +270,9 @@ wire        vram_req, vram_we, vram_ack; wire [15:0] vram_addr, vram_wdata, vram
 
 wire        ddr_busy, ddr_dready;
 wire [63:0] ddr_dout;
+wire        mem_ddr_rd;                              // the fast load's block reads: the arbiter's client port
+wire [24:0] mem_ddr_addr;
+wire  [7:0] mem_ddr_burst;
 
 wire        dram_cke;
 wire  [1:0] dram_dqm;
@@ -249,6 +284,9 @@ mf_mem u_mem
 	.vram_ok(vram_ok), .vram_bad(vram_bad),
 	.rd_late(status[10]), .burst_slow(1'b0),
 	.dl_we(dl_we), .dl_addr(ioctl_addr[24:0]), .dl_data(ioctl_dout), .dl_wait(ioctl_wait),
+	.fl_go(fl_go), .fl_len(fast_len), .fl_done(fl_done),
+	.ddr_rd(mem_ddr_rd), .ddr_addr(mem_ddr_addr), .ddr_burst(mem_ddr_burst),
+	.ddr_busy(ddr_busy), .ddr_dout(ddr_dout), .ddr_dready(ddr_dready),
 	.prog_req(prog_req), .prog_addr(prog_addr), .prog_ack(prog_ack), .prog_q(prog_q),
 	.tile_req(tile_req), .tile_addr(tile_addr), .tile_ack(tile_ack), .tile_q(tile_q),
 	.lvc_req(lvc_req), .lvc_addr(lvc_addr), .lvc_ack(lvc_ack), .lvc_q(lvc_q),
@@ -264,7 +302,8 @@ assign SDRAM_CKE  = dram_cke;
 assign SDRAM_nCS  = 1'b0;
 assign {SDRAM_DQMH, SDRAM_DQML} = dram_dqm;
 
-// DDR3: Flip Screen's frame buffers only (the machine has no client of its own here)
+// DDR3: Flip Screen's frame buffers, and the fast load's reads of the image (the memory subsystem's client port; the
+// machine itself has none)
 wire        ddr_overflow;
 wire        fb_we, fl_rd, fl_busy, fl_dready;       // flip_buf: frame writes and line reads
 wire [28:0] fb_addr;
@@ -275,7 +314,7 @@ wire  [7:0] fl_burst;
 ddr_arb u_ddr
 (
 	.clk(clk_sys), .reset(~pll_locked),
-	.c_rd(1'b0), .c_we(1'b0), .c_addr(25'd0), .c_burst(8'd0), .c_din(64'd0), .c_be(8'd0),
+	.c_rd(mem_ddr_rd), .c_we(1'b0), .c_addr(mem_ddr_addr), .c_burst(mem_ddr_burst), .c_din(64'd0), .c_be(8'd0),
 	.c_busy(ddr_busy), .c_dout(ddr_dout), .c_dready(ddr_dready),
 	.r_we(fb_we), .r_addr(fb_addr), .r_din(fb_din), .r_be(8'hFF),
 	.f_rd(fl_rd), .f_addr(fl_addr), .f_burst(fl_burst), .f_busy(fl_busy), .f_dready(fl_dready),
@@ -292,7 +331,7 @@ wire        reset_sw  = RESET | status[0] | buttons[1];
 // the machine's reset is registered: it fans out to the whole core, including the
 // Z80's asynchronous reset, and the OR of its sources in front of that fan-out
 // was the tightest recovery path of the Gaiapolis fits
-wire        mf_reset_c = reset_sw | ioctl_download | ~mem_ready | test_hold | test_run;
+wire        mf_reset_c = reset_sw | ioctl_download | fast_dl | ~mem_ready | test_hold | test_run;
 reg         mf_reset = 1'b1;
 always @(posedge clk_sys) mf_reset <= mf_reset_c;
 
@@ -393,7 +432,7 @@ always @(posedge clk_sys) begin
 	if (mf_snd_valid && (mf_snd_l != 16'd0)) ovl_seen_snd <= 1'b1;
 end
 wire [95:0] ovl_status_d = {
-	ovl_frames, pll_locked, mem_ready, ioctl_download, test_hold, 1'b0, mf_reset, dbg_irq5, ovl_seen_step,
+	ovl_frames, pll_locked, mem_ready, ioctl_download | fast_dl, test_hold, 1'b0, mf_reset, dbg_irq5, ovl_seen_step,
 	ovl_resets, test_done, test_run, vram_ok, vram_bad, ovl_seen_zstep,
 	dbg_addr, test_ok[0], test_ok[1], test_ok[2], test_ok[3], test_ok[4], test_ok[5], 1'b0, ovl_seen_snd,
 	test_stable[0], test_stable[1], test_stable[2], test_stable[3], test_stable[4], test_stable[5], 1'b0, ddr_overflow,
@@ -515,6 +554,7 @@ crt_adjust #(.VTOTAL(264), .HTOTAL(384), .HPOS_MODE(1)) u_crt
 	.hs_ref_out(crt_hs_ref)
 );
 
+wire vga_de_av;
 arcade_video #(.WIDTH(288), .DW(24), .GAMMA(1)) arcade_video
 (
 	.clk_video(clk_sys),
@@ -528,12 +568,34 @@ arcade_video #(.WIDTH(288), .DW(24), .GAMMA(1)) arcade_video
 	.CLK_VIDEO(CLK_VIDEO),
 	.CE_PIXEL(CE_PIXEL),
 	.VGA_R(VGA_R), .VGA_G(VGA_G), .VGA_B(VGA_B),
-	.VGA_HS(VGA_HS), .VGA_VS(VGA_VS), .VGA_DE(VGA_DE),
+	.VGA_HS(VGA_HS), .VGA_VS(VGA_VS), .VGA_DE(vga_de_av),
 	.VGA_SL(VGA_SL),
 
 	.fx(status[5:3]),
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus)
+);
+
+// Scale: integer scaling on the HDMI scaler (framework module; it measures the picture's rows and width from the
+// finished stream, scandoubler and CRT Adjust included, and works out the size from HDMI_WIDTH/HEIGHT). Crop is unused.
+// With Normal it adds nothing but a few clocks of delay to VGA_DE.
+video_freak video_freak
+(
+	.CLK_VIDEO(CLK_VIDEO),
+	.CE_PIXEL(CE_PIXEL),
+	.VGA_VS(VGA_VS),
+	.HDMI_WIDTH(HDMI_WIDTH),
+	.HDMI_HEIGHT(HDMI_HEIGHT),
+	.VGA_DE(VGA_DE),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY),
+
+	.VGA_DE_IN(vga_de_av),
+	.ARX(arx),
+	.ARY(ary),
+	.CROP_SIZE(12'd0),
+	.CROP_OFF(5'd0),
+	.SCALE(scale_sel)
 );
 
 ///////////////////////   LED   ///////////////////////
