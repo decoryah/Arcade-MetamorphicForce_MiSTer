@@ -151,7 +151,7 @@ throughout), which `rtl/mf_sound.sv` applies.
 
 ## 6. Inputs
 
-`P1_P3` / `P2_P4`: each byte a player: bit 0 left, 1 right, 2 up, 3 down, 4-6 buttons 1-3, 7 start (active low); the
+`P1_P3` / `P2_P4`: each byte a player: bit 0 left, 1 right, 2 up, 3 down, 4-6 buttons 1-3 (the cabinet has two, Attack and Jump; MAME's third is not used by the game's play), 7 start (active low); the
 low byte is players 1 / 2 and the high byte players 3 / 4. `IN0`: coin 1-4 (bits 0-3), service 1-2 (bits 4-5).
 `IN1` low byte: bit 0 EEPROM DO, bit 1 READY, bit 2 unassigned (the game polls for 0), bit 3 service mode (low = on),
 bit 4 sound output (1 = mono), bit 5 coin mechanism (1 = common), bit 6 number of players (1 = 2, 0 = 4), bit 7

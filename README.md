@@ -194,8 +194,9 @@ flags: unsupported tile-layer mode met, a second shadow on a pixel, K053250 DMA 
 which renderers (tilemap, K053250, sprites) were still busy when a line started. Row 1's first 24 squares are the live 68000
 bus address and flicker.
 
-The game is horizontal (ROT0). On a gamepad the default mapping is A / B / R for buttons 1 / 2 / 3, Start for Start and
-Select for Coin (remap it in MiSTer's usual way); up to four joysticks. From the keyboard: 1-4 start, 5-8 coin and F2 for the
+The game is horizontal (ROT0) and has two buttons, Attack and Jump (the arcade cabinet has two; MAME defines a third that the
+game does not use). On a gamepad the default mapping is A for Attack, B for Jump, Start for Start and Select for Coin
+(remap it in MiSTer's usual way); up to four joysticks. From the keyboard: 1-4 start, 5-8 coin and F2 for the
 test switch, on top of MiSTer's usual keyboard-as-joystick. The game's own settings and high scores live in its EEPROM,
 which MiSTer saves and restores.
 
