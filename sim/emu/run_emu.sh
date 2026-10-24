@@ -15,6 +15,9 @@
 # size the core asks the scaler for (VIDEO_ARX / VIDEO_ARY) is checked against the framework's rule (see tb_emu.cpp)
 # Fast load: FAST=1 models the HPS side of the MRA's address= attribute (the image copied into the DDR3, then a
 # download with no bytes) and the core replays it into its loader
+# Colours: the default is the board DAC's curve (rtl/data/k054573_dac.hex); COLOURS_MAME=1 is the palette as it is. Two runs
+# of the same frames, one each, are checked with sim/emu/dac_check.py (every pixel of the first is the table of the second's).
+# Every run that is compared with an older one picture for picture (CRT Adjust, Flip Screen, the scandoubler) uses COLOURS_MAME=1
 # The image is tools/mra_build.py on a mra/*.mra (0x1080000 bytes); the EEPROM default is metamrph.nv from the romset
 # (128 bytes).
 set -e

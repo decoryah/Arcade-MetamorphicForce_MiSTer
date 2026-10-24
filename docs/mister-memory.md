@@ -109,6 +109,18 @@ sizes the height from the width and asks for more rows than the screen has. With
 `video_freak` the scaler's own size (`HDMI_WIDTH` x `HDMI_HEIGHT`) as the proportions (`fs_int`), so Full Screen is the largest
 whole-number picture in the screen's aspect; with the scaler's size unknown (direct video) it passes through as before.
 
+### Colours (the board's video DAC) and the one-clock stage
+
+`MetamorphicForce.sv` takes the machine's picture signals as `mfc_*` and gives everything downstream (the diagnostic overlay,
+Flip Screen, CRT Adjust, `arcade_video`) the registered `mf_*`: the colour through the Colours table (`rtl/data/k054573_dac.hex`,
+256 bytes in logic, no RAM block; `status[35]` selects MAME's palette as it is) and the pixel enable, the syncs and the blanks
+one clock later, as a whole. The delay of the enable matters: the mixer's last painter's step lands in the clock before the pixel
+enable (`rtl/mf_mixer.sv`: `rgb` is stable in the clock `cen_pix` is high), so a register on the colour alone is read a clock
+early, which dropped the topmost layer (the "CREDIT 00" text on the first screens) in a first attempt. The check that caught it
+is the one that matters: with Colours on MAME the whole top level's scaler picture is byte for byte the picture of every earlier
+build (md5 `84c3fa48…`), and the Board DAC picture is, pixel for pixel and at the same place, the table applied to it
+(`sim/emu/dac_check.py`: 0 of 193,536 channel values off). A run with both modes on the same frames is the first check to make.
+
 ## Verification
 
 * `sim/tb_mf.cpp` (`tb_mf_top.sv`): `mf_core` behind `mf_mem` and a behavioural SDRAM chip, with the image streamed through the
@@ -121,7 +133,8 @@ whole-number picture in the screen's aspect; with the scaler's size unknown (dir
   must come out of reset on its own, the same loader check applies, and the scaler's picture must equal the streamed load's.
   `SCALE=0..4` / `AR=0..3` / `HW`, `HH` set the Scale item, the Aspect ratio and the scaler's output size, and the bench
   checks the size the core asks the scaler for against the rule above, worked out independently from the picture's rows and
-  the settings.
+  the settings. `COLOURS_MAME=1` is Colours on MAME (the default is the board DAC's curve); two runs of the same frames,
+  one each, go to `sim/emu/dac_check.py`, and every run that is compared with an older one picture for picture uses it.
 * `sim/emu/run_sd.sh`: `mf_video`'s raster into the framework's `arcade_video` and nothing else, with Scandoubler Fx and
   forced_scandoubler selectable (`HONLY=0` is the first release's wiring, which has no vertical sync once scandoubled).
 * The built-in memory test (`mem_test.sv`, the diagnostic overlay's squares) reads every region back through the machine's own

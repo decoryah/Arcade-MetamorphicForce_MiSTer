@@ -214,6 +214,7 @@ int main(int argc, char **argv) {
     }
     if (getenv("MONO") && atoi(getenv("MONO"))) set_status(8, 1);
     if (getenv("TEST") && atoi(getenv("TEST"))) set_status(6, 1);
+    if (getenv("COLOURS_MAME") && atoi(getenv("COLOURS_MAME"))) set_status(35, 1);   // Colours: MAME's palette (the default is the board DAC's curve)
     run(40000);                                  // SDRAM init, cache sweeps
     if (noload) {                                // a quick check of the video path: no ROM, the overlay is the test pattern
         printf("up after %llu clocks; no image download (video-path check)\n", cycles);

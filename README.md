@@ -15,11 +15,13 @@ No ROMs or other copyrighted data are in this repository; you supply your own MA
 
 ## Status
 
-**Run on a real MiSTer, by one tester so far.** The repository owner has played 20261011, 20261012, 20261013 and 20261014
-on a board with all five MRAs, on HDMI through a RetroTINK 4K and on a 15 kHz analog output: the game runs fine overall, CRT
-Adjust works, and so do the fast loading and the Scale options of 20261013 and the Hall of Fame title of 20261014. That is
-one person's test on one board, not a comparison with the arcade PCB, so please report what yours shows. The fault found
-there since 20261012, the Hall of Fame screen's title animation, had not been in any of the frame corpora.
+**Run on a real MiSTer, by one tester so far.** The repository owner has played 20261011, 20261012, 20261013, 20261014 and
+20261024 on a board with all five MRAs, on HDMI through a RetroTINK 4K and on a 15 kHz analog output: the game runs fine
+overall, CRT Adjust works, and so do the fast loading and the Scale options of 20261013, the Hall of Fame title of 20261014
+and the Colours option of 20261024 (which looks right). That is one person's test on one board, not a side-by-side
+comparison with the arcade PCB, so please report what yours shows. The fault found there since 20261012, the Hall of Fame
+screen's title animation, had not been in any of the frame corpora. The Colours curve itself is checked against a recording
+of a PCB (see "Colours").
 
 Everything else below is simulation and the Quartus tool flow, against MAME 0.289 (the reference for every comparison;
 MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
@@ -64,11 +66,11 @@ MAME marks these sets `MACHINE_IMPERFECT_GRAPHICS`):
   streamed in a byte at a time through the ioctl port, then the EEPROM default. Every word of the image is where the ports
   read it (8,650,752 compared with the SDRAM chip's array), the raster is 384 x 264 x 16 clocks = 59.1856 Hz in every
   frame, the picture is 224 rows of 288 pixels, and the EEPROM reads back through the save path.
-* **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7 (the figures are 20261014's;
-  each release's summaries are in `releases/`): 45 % of the ALMs (19,047 of 41,910), 94 % of the block RAM (520 of 553
-  M10K, so little is left), 69 DSPs, and timing closes at 96 MHz with every check positive (setup +0.32 ns on the core's
-  clock, hold +0.24, recovery +1.80, removal +1.15 in the slow 100 C model; the framework's own HDMI clock domain closes
-  with +0.43 ns). `tools/check_ram_depth.py` finds all 34 RAM
+* **Quartus Prime Lite 17.0.2** (MiSTer's toolchain) compiles the project for the 5CSEBA6U23I7 (the figures are 20261024's;
+  each release's summaries are in `releases/`): 46 % of the ALMs (19,250 of 41,910), 94 % of the block RAM (520 of 553
+  M10K, so little is left), 69 DSPs, and timing closes at 96 MHz with every check positive (setup +0.52 ns on the core's
+  clock, hold +0.24, recovery +1.52, removal +1.22 in the slow 100 C model; the framework's own HDMI clock domain closes
+  with +0.58 ns). `tools/check_ram_depth.py` finds all 34 RAM
   blocks the RTL declares built at their declared depth (an earlier core's fit built two-bank line buffers shallower than
   declared, which no simulator shows).
 
@@ -136,10 +138,30 @@ the renderer now handles. Fitter and timing summaries: `releases/metamorphicforc
 (19,047 ALMs; setup +0.32 ns on the core's clock, where the fit of 20261013 had +0.70: the same kind of change of
 placement as between 20261011 and 20261012). Run on a MiSTer by the repository owner: the title animation is right.
 
+**20261019** -- MRAs only (the core is `metamorphicforce_20261014.rbf` as it was): the game has two buttons, Attack and
+Jump, as the cabinet does, and the MRAs now say so (`names="Attack,Jump,-,Start,Coin" count="2"`; they declared MAME's
+three generic ones, so MiSTer asked for a third button the game does not use; reported as issue #1). Checked in MAME: the
+same scripted play-through twice, with Button 3 never pressed and with it held half the time, differs only in the game's own
+copy of the input word, and the pictures are identical.
+
+**20261024** -- Colours: the board's video DAC (new OSD option, Board DAC by default; see "Colours" under the OSD
+options). A real board's mid tones are darker than MAME's straight palette; the table is the Gaiapolis core's model of the
+Konami 054573 DAC, and a recording of a Metamorphic Force PCB (OSSC) fits it at the same source current (rms 2.3 levels of
+255 on the select-player screen against 17.6 for a straight line; 4.0 against 15.2 over the attract-mode screens). Checked
+in the whole top level's bench (`sim/emu/run_emu.sh` with the default and with `COLOURS_MAME=1`, and
+`sim/emu/dac_check.py`): every pixel of the Board DAC picture is the MAME run's pixel looked up in the table, at the same
+place (0 of 193,536 channel values off), and with Colours on MAME the scaler picture is byte for byte the picture of the
+earlier builds (also with CRT Adjust on, and through the forced scandoubler; frame period, geometry and the EEPROM path as
+before; with Flip Screen on the picture is still the overlay's turned 180 degrees, 64,512 of 64,512 pixels). A first version with a register on the colour alone dropped the topmost layer (the "CREDIT 00" text): the mixer's
+last step lands in the clock before the pixel enable, so the pixel enable, syncs and blanks now go through the same stage
+and the picture is one clock late as a whole. Fitter and timing summaries: `releases/metamorphicforce_20261024.fit.summary`
+and `.sta.summary` (19,250 ALMs, no RAM block for the table; setup +0.52 ns on the core's clock, hold +0.24). The core
+includes everything of 20261013 and 20261014. Run on a MiSTer by the repository owner: the colours look right.
+
 ## Install
 
-1. Unzip `MetamorphicForce_MiSTer_20261014.zip` over the root of the SD card, or copy by hand the RBF
-   (`releases/metamorphicforce_20261014.rbf`) to `/media/fat/_Arcade/cores/` and the `.mra` files from `mra/` to
+1. Unzip `MetamorphicForce_MiSTer_20261024.zip` over the root of the SD card, or copy by hand the RBF
+   (`releases/metamorphicforce_20261024.rbf`) to `/media/fat/_Arcade/cores/` and the `.mra` files from `mra/` to
    `/media/fat/_Arcade/`. Keep the RBF's `metamorphicforce_` name and date: MiSTer finds the core by the MRA's `<rbf>` name
    plus the date, and takes the newest if there are several, so delete older `metamorphicforce_*.rbf` files.
 2. Put your MAME 0.289 `metamrph.zip` in `/media/fat/games/mame/` (the parent set; the USA, Japan and Asia versions' ROMs
@@ -164,6 +186,7 @@ whole, much longer streamed load without. How it works: `docs/mister-memory.md`,
 |---|---|---|
 | Aspect ratio | Original, Full Screen, [ARC1], [ARC2] | Original is 4:3 |
 | Scale | Normal, V-Integer, HV-Integer, Narrower HV-Integer, HV-Integer+ | Integer scaling for the HDMI scaler (the framework's `video_freak`; the 15 kHz analog output is not touched). Normal leaves the picture's size to the scaler. The modes work from the finished picture (the scandoubler and CRT Adjust included) and the scaler's own output size; Full Screen has no proportions for the integer rule to size the width from, so with an integer Scale it is given the screen's own |
+| Colours | Board DAC, MAME | Board DAC (the default) puts R, G and B through the curve of the board's video DAC: darker mid tones, as on a real board. MAME is the palette as it is, as MAME shows it (and every build before `metamorphicforce_20261024`). On every output. Switch MiSTer's own gamma correction (Video processing) off with Board DAC. See "Colours" below |
 | Flip Screen | Off, On | The picture turned 180 degrees on every output. Done on the finished picture through a frame buffer in the DDR3, so it adds one frame (17 ms) of delay while it is on and nothing when it is off |
 | Scandoubler Fx | None, HQ2x, CRT 25%, CRT 50%, CRT 75% | |
 | CRT Adjust | submenu: CRT Adjust Off, On; then CRT H-Size 0..+2 / -16..-1, CRT H-Position -48..+12, CRT V-Shift -16..+15 | Fits the picture to a 15 kHz analog (CRT) output without the monitor losing sync. Does nothing while the scandoubler is in use. Off by default |
@@ -184,6 +207,39 @@ this core's blank was the picture window, high through the whole vertical blank.
 the core gives it the horizontal blank alone (`hde` from `mf_video.sv`) with the vertical blank separate. The 15 kHz
 output and HDMI without Scandoubler Fx, which is what the board tests used, are as they were. (Found from a report on the
 Gaiapolis core, which had the same wiring.)
+
+**Colours.** A real board's picture has darker mid tones than MAME's. MAME shows the palette as straight 8-bit values,
+which is what the colour chip computes; the video DAC after it is not linear. The Gaiapolis core's work on this (same
+board family) is the model: each channel goes through a Konami 054573 DAC module, which, traced from the Gerbers and BOM of
+Ace's reproduction of it ([UKVAC](https://www.ukvac.com/forum/threads/konami-054573-and-054574-reproductions.84054/)), is
+a conductance divider (each data bit pulls a summing node down through its own resistor while it is 0; two diodes and an
+emitter follower take the node to the output), so its output rises faster towards the top. The K054338 passes plain
+8-bit integers (SiliconRE's trace of its silicon), so the curve can only be the DAC's.
+
+* The check against this game's board: a recording of a Metamorphic Force PCB (Ver AAA, through an OSSC) against MAME's
+  frames of the same screens, flat areas only, each channel with the capture's own gain and offset (the capture clips near
+  white, so codes above 232 are left out). On the select-player screen the DAC model fits with rms 2.3 levels of 255
+  where a straight line (MAME) is 17.6 off and the best plain gamma curve 3.3; over the attract-mode screens at the end of
+  the recording (levels with at least 300 flat pixels) 4.0, against 15.2 and 5.3. Its best source current, 14.5 mA, is
+  the one the Gaiapolis recording gave, and the capture gains agree (about 69 against 65 per volt). The recording is a
+  2.5 Mbps stream with subsampled chroma, so single colours scatter by about 5 levels; the fit does not pin the current
+  down between 14.5 and 22 mA.
+* Board DAC maps code 0 to black and 0xEF, the brightest value the game writes (its green and blue top out at 0xEF), to
+  full white, with the circuit's curve in between (0x40 becomes 26, 0x80 74, 0xC0 151). `tools/make_dac_table.py` holds the model and writes the
+  table (`rtl/data/k054573_dac.hex`); `MetamorphicForce.sv` puts it in front of everything that uses the picture
+  (the diagnostic overlay, Flip Screen, CRT Adjust, the scaler), so every output gets it, and the picture, its syncs
+  and blanks are one clock later as a whole.
+* The brightness path (K054338 registers 11 and 12, selected per layer by the K055555): on the board it sets the current
+  the DACs run on, and the mixer here scales the colours as MAME does (digitally, before the table; the board dims after
+  the DAC curve, which is darker). This game never uses it: a log of every write to the K055555's brightness register
+  (`tools/lua/bri_log.lua`) over 40,000 frames of the attract mode and a 70,000-frame scripted play-through shows it
+  stays at code 0, full brightness, the whole time (the K054338's level register 11 is set once at start-up and no
+  layer ever selects it), and every captured state (311 frames) says the same. Fades are palette changes, which the table
+  sees as the board's DACs do. A game that did use brightness would need it applied after the table.
+
+It is a model, not a measurement: the resistor values are the repro's (the original modules are sealed), the
+transistors and diodes generic, and the one free value comes from a video capture whose own levels are not known. An
+oscilloscope on a real board's RGB output would settle it. With Colours on MAME a MiSTer gamma file can still be used.
 
 **Reading the diagnostic overlay.** Turn it on *before* the ROM loads (OSD, then load the game again), or the memory test
 is skipped and its squares stay dark. Row 0: frame counter, PLL locked, memory ready, download, test hold, core reset, IRQ5,
@@ -283,6 +339,10 @@ of a MHz, so a hundred frames takes about twenty minutes.
   (`modules/crt-adjust/crt_adjust.sv`; GPL-3.0 or later).
 * **furrtek** -- [SiliconRE](https://github.com/furrtek/SiliconRE/tree/master/Konami)'s silicon-traced models and notes of
   the K053252 timing chip (the raster), the K054338 and K055555.
+* **Ace** -- the Gerbers and BOM of the
+  [K054573 / K054574 reproductions](https://www.ukvac.com/forum/threads/konami-054573-and-054574-reproductions.84054/), and
+  **Franck78** -- the schematic of the Gaiapolis board: with the Gaiapolis core's model built on them, the basis of the
+  Colours option.
 * **Jose Tejada (jotego)** -- JTFRAME's MiSTer SDRAM clock phase and read-capture timing, which this core's PLL and
   controller settings follow; and, with the other authors of the independent Konami cores read as references (jlrh's
   `konami-fpga`, ppriest's `Arcade-KonamiGX_MiSTer`), the cross-checks of the K053250, K054338, K055555, K056832 and K055673.

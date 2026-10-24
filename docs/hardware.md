@@ -136,6 +136,28 @@ have no effect in any dumped frame); a sprite's own mix code blends it, and **MA
 where this core blends the final sprite pixel once: they differ where two translucent sprites overlap (the later
 stages' water reflections; 10 of the 115 corpus frames). See the README's "Known differences".
 
+### Video DAC (Colours option)
+The mixer's 8-bit R, G and B go straight to three Konami 054573 DAC modules (one per colour; the K054338's brightness
+output goes to a K054574 that sets the current each module runs on), as on the Gaiapolis board (Franck78's schematic,
+Ace's reproductions of the modules: the Gaiapolis core's README has the full derivation). The 054573 is a conductance
+divider, not a resistor ladder, so its output is convex: mid tones are darker than MAME's linear palette. The K054338's
+brightness code 0 (the K055555's V_BRI field) is hard-wired to 0xFF, and this game only ever selects it: every dumped frame
+(311: the attract mode, the scripted play, the Hall of Fame) has it, and `tools/lua/bri_log.lua`, which logs every write to
+the K055555's register 42 and the K054338's registers 11 and 12, saw no non-zero code in 40,000 attract frames and a
+70,000-frame scripted play-through (register 11 is set to 0x3c once at start-up and never selected). So the DACs run on one
+fixed current and the mixer's digital brightness (`c * bri / 255`, MAME's, before the Colours table) is always 0xFF here. The
+board dims in the analog domain, after the DAC curve; a game that used brightness would need it applied after the table. The OSD's Colours option
+(`MetamorphicForce.sv`, `tools/make_dac_table.py`, `rtl/data/k054573_dac.hex`) applies the model's curve, black at 0 and
+0xEF (the brightest value the game writes) at 255, to the mixer's output.
+
+Checked against a recording of a Metamorphic Force PCB (Ver AAA, OSSC, 1280 x 720 H.264 at 2.5 Mbps; the picture is at
+x = 213 + 3.046 px, y = 21.5 + 3 py): MAME's frames of the same screens, flat areas only, each channel with the capture's
+own gain and offset, codes up to 232 (the capture clips near white). Select-player screen: rms 2.3 of 255 for the model
+at the Gaiapolis current (14.5 mA), 17.6 for a straight line, 3.3 for the best free gamma curve; attract-mode screens
+(levels with 300 or more flat pixels): 4.0, 15.2 and 5.3. The fit is flat for currents of 14.5 to 22 mA. The tools (not
+in the repository) were the Gaiapolis session's `dacmodel_lib.py` and a per-frame matcher of the capture against MAME's
+attract-mode snapshots.
+
 ### Interrupts and timing
 `ddd_interrupt` is replaced here by `metamrph_interrupt`: IRQ6 (`HOLD_LINE`) at MAME line 24, and IRQ5 at line 248 when
 the K053246's register 5 bit 4 (sprite DMA / IRQ enable) is set. The game writes the sprite RAM in vpos 48..160, triggers the

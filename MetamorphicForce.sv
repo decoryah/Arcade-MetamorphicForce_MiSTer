@@ -84,6 +84,7 @@ localparam CONF_STR = {
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[34:32],Scale,Normal,V-Integer,HV-Integer,Narrower HV-Integer,HV-Integer+;",
+	"O[35],Colours,Board DAC,MAME;",
 	"O[12],Flip Screen,Off,On;",
 	"O[5:3],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"P1,CRT Adjust;",
@@ -343,8 +344,12 @@ wire  [6:0] eep_addr  = ioctl_addr[6:0];
 wire  [7:0] eep_wdata = ioctl_dout;
 assign      ioctl_din = eep_q;
 
-wire        mf_cen_pix, mf_hs, mf_vs, mf_de, mf_hde, mf_vb;
-wire [23:0] mf_rgb;
+// the machine's picture signals as it emits them (mfc_*), and as the rest of the top level gets them (mf_*): one clock
+// later, with the Colours table applied to the colour (see below)
+wire        mfc_cen_pix, mfc_hs, mfc_vs, mfc_de, mfc_hde, mfc_vb;
+wire [23:0] mfc_rgb;
+reg         mf_cen_pix, mf_hs, mf_vs, mf_de, mf_hde, mf_vb;
+reg  [23:0] mf_rgb;
 wire [15:0] mf_snd_l, mf_snd_r;
 wire        mf_snd_valid;
 wire [23:0] dbg_addr; wire [15:0] dbg_data; wire [1:0] dbg_busstate; wire [9:0] dbg_objcount; wire [8:0] dbg_vcount;
@@ -366,7 +371,7 @@ mf_core #(.HEXDIR("rtl/data")) mf
 	.pcm_req(pcm_req), .pcm_addr(pcm_addr), .pcm_ack(pcm_ack), .pcm_q(pcm_q),
 	.eep_ld_we(eep_we), .eep_ld_addr(eep_addr), .eep_ld_wdata(eep_wdata), .eep_ld_q(eep_q), .eep_dirty(eep_dirty),
 	.in_p1_p3(in_p1_p3), .in_p2_p4(in_p2_p4), .in0(in0), .in1(in1),
-	.cen_pix(mf_cen_pix), .rgb(mf_rgb), .hsync(mf_hs), .vsync(mf_vs), .de(mf_de), .hde(mf_hde), .vblank(mf_vb),
+	.cen_pix(mfc_cen_pix), .rgb(mfc_rgb), .hsync(mfc_hs), .vsync(mfc_vs), .de(mfc_de), .hde(mfc_hde), .vblank(mfc_vb),
 	.snd_l(mf_snd_l), .snd_r(mf_snd_r), .snd_valid(mf_snd_valid),
 	.dbg_addr(dbg_addr), .dbg_data(dbg_data), .dbg_busstate(dbg_busstate), .dbg_step(dbg_step),
 	.dbg_irq5(dbg_irq5), .dbg_irq6(dbg_irq6),
@@ -442,6 +447,21 @@ wire [95:0] ovl_status_d = {
 // path from there through the overlay and the flip stage is longer than a clock; the panel is not time-critical
 reg  [95:0] ovl_status;
 always @(posedge clk_sys) ovl_status <= ovl_status_d;
+// Colours: the board's video DAC (a Konami 054573 per channel) is not linear: its output rises faster near the top,
+// so mid tones come out darker than MAME's straight 8-bit palette. Board DAC looks each channel up in the DAC's curve
+// (tools/make_dac_table.py: black stays 0, 0xEF, the brightest the game writes, is 255); MAME passes the palette
+// through. One register stage in front of everything that uses the picture (the overlay, Flip Screen, CRT Adjust, the
+// scaler's inputs), so the table is off the long paths behind it, and the overlay's own squares keep their colours.
+// The mixer's last step lands in the clock before the pixel enable, so a register on the colour alone would be read
+// a clock early (it dropped the topmost layer): the pixel enable, the syncs and the blanks go through the same stage,
+// and the picture is one clock late as a whole, with nothing in it moved
+(* romstyle = "logic" *) reg [7:0] dac_tab [256];
+initial $readmemh("rtl/data/k054573_dac.hex", dac_tab);
+always @(posedge clk_sys) begin
+	mf_rgb     <= status[35] ? mfc_rgb : {dac_tab[mfc_rgb[23:16]], dac_tab[mfc_rgb[15:8]], dac_tab[mfc_rgb[7:0]]};
+	mf_cen_pix <= mfc_cen_pix; mf_hs <= mfc_hs; mf_vs <= mfc_vs; mf_de <= mfc_de; mf_hde <= mfc_hde; mf_vb <= mfc_vb;
+end
+
 wire [7:0] ovl_r, ovl_g, ovl_b;
 dbg_overlay ovl
 (
